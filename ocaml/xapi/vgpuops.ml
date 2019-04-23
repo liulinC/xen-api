@@ -55,10 +55,27 @@ let fail_creation vm vgpu =
         Ref.string_of vgpu.gpu_group_ref
       ]))
 
-let allocate_vgpu_to_gpu ~__context vm host vgpu =
+let allocate_vgpu_to_gpu ?dry_run ?dry_run_list ~__context vm host vgpu  =
   let available_pgpus = Db.Host.get_PGPUs ~__context ~self:host in
   let compatible_pgpus = Db.GPU_group.get_PGPUs ~__context ~self:vgpu.gpu_group_ref in
   let pgpus = List.intersect compatible_pgpus available_pgpus in
+
+  let remaining_capacity_for_vgpu_from_pgpu vgpu pgpu = 
+    let db_remaining =  Helpers.call_api_functions ~__context 
+        (fun rpc session_id ->
+             Client.Client.PGPU.get_remaining_capacity ~rpc ~session_id
+               ~self:pgpu ~vgpu_type:vgpu.type_ref) in
+    match (dry_run,dry_run_list) with
+    |(Some true, Some dry_run_list) ->
+        let virtul_allocation = List.fold_left (fun num ele ->
+            match ele with 
+            |(_,cpgpu) when cpgpu = pgpu -> Int64.add num 1L
+            |(_,_) -> num )
+        0L dry_run_list in
+                Int64.sub db_remaining  virtul_allocation
+    |(_,_) -> db_remaining 
+  in
+
   (* Sort the pgpus in lists of equal optimality for vGPU placement based on
    * the GPU groups allocation algorithm *)
   let sort_desc =
@@ -67,10 +84,7 @@ let allocate_vgpu_to_gpu ~__context vm host vgpu =
     | `breadth_first -> true
   in
   let sorted_pgpus = Helpers.sort_by_schwarzian ~descending:sort_desc
-      (fun pgpu ->
-         Helpers.call_api_functions ~__context (fun rpc session_id ->
-             Client.Client.PGPU.get_remaining_capacity ~rpc ~session_id
-               ~self:pgpu ~vgpu_type:vgpu.type_ref))
+      (fun pgpu -> remaining_capacity_for_vgpu_from_pgpu vgpu pgpu )
       pgpus
   in
   let rec choose_pgpu = function
@@ -85,9 +99,13 @@ let allocate_vgpu_to_gpu ~__context vm host vgpu =
   match choose_pgpu sorted_pgpus with
   | None -> fail_creation vm vgpu
   | Some pgpu ->
+    match dry_run , dry_run_list  with
+    |(Some true, Some dry_run_list)->
+        (vgpu,pgpu)::dry_run_list
+    |_->
     Db.VGPU.set_scheduled_to_be_resident_on ~__context
       ~self:vgpu.vgpu_ref ~value:pgpu;
-    pgpu
+   [vgpu,pgpu]
 
 (* Take a PCI device and assign it, and any dependent devices, to the VM *)
 let add_pcis_to_vm ~__context host vm pci =
