@@ -18,7 +18,7 @@ open Stdext
 open Listext
 open Xstringext
 
-type vgpu = {
+type vgpu_t = {
   vgpu_ref: API.ref_VGPU;
   gpu_group_ref: API.ref_GPU_group;
   devid: int;
@@ -55,7 +55,7 @@ let fail_creation vm vgpu =
         Ref.string_of vgpu.gpu_group_ref
       ]))
 
-let allocate_vgpu_to_gpu ?dry_run ?dry_run_list ~__context vm host vgpu  =
+let allocate_vgpu_to_gpu ?dry_run ?pre_allocate_list ~__context vm host vgpu =
   let available_pgpus = Db.Host.get_PGPUs ~__context ~self:host in
   let compatible_pgpus = Db.GPU_group.get_PGPUs ~__context ~self:vgpu.gpu_group_ref in
   let pgpus = List.intersect compatible_pgpus available_pgpus in
@@ -65,15 +65,17 @@ let allocate_vgpu_to_gpu ?dry_run ?dry_run_list ~__context vm host vgpu  =
         (fun rpc session_id ->
              Client.Client.PGPU.get_remaining_capacity ~rpc ~session_id
                ~self:pgpu ~vgpu_type:vgpu.type_ref) in
-    match (dry_run,dry_run_list) with
-    |(Some true, Some dry_run_list) ->
+    (* Check if any pre-allocation existed, this pre-allocation is not reflected
+     * in the database, usually in the dry run mode*)
+    match pre_allocate_list with
+    | Some pre_allocate_list ->
         let virtul_allocation = List.fold_left (fun num ele ->
             match ele with 
             |(_,cpgpu) when cpgpu = pgpu -> Int64.add num 1L
             |(_,_) -> num )
-        0L dry_run_list in
-                Int64.sub db_remaining  virtul_allocation
-    |(_,_) -> db_remaining 
+        0L pre_allocate_list in
+            Int64.sub db_remaining  virtul_allocation
+    | _ -> db_remaining 
   in
 
   (* Sort the pgpus in lists of equal optimality for vGPU placement based on
@@ -99,13 +101,16 @@ let allocate_vgpu_to_gpu ?dry_run ?dry_run_list ~__context vm host vgpu  =
   match choose_pgpu sorted_pgpus with
   | None -> fail_creation vm vgpu
   | Some pgpu ->
-    match dry_run , dry_run_list  with
-    |(Some true, Some dry_run_list)->
-        (vgpu,pgpu)::dry_run_list
-    |_->
-    Db.VGPU.set_scheduled_to_be_resident_on ~__context
-      ~self:vgpu.vgpu_ref ~value:pgpu;
-   [vgpu,pgpu]
+      let bneed_db_operation = match dry_run with
+          | Some true ->  false
+          | _ -> true in
+      if bneed_db_operation then
+          Db.VGPU.set_scheduled_to_be_resident_on ~__context ~self:vgpu.vgpu_ref ~value:pgpu;
+
+      let pre_list = match pre_allocate_list with
+          | Some pre_allocate_list -> pre_allocate_list
+          | _ -> [] in
+      (vgpu.vgpu_ref,pgpu)::pre_list
 
 (* Take a PCI device and assign it, and any dependent devices, to the VM *)
 let add_pcis_to_vm ~__context host vm pci =
@@ -153,14 +158,14 @@ let add_vgpus_to_vm ~__context host vm vgpus vgpu_manual_setup =
     match vgpu.requires_passthrough with
     | Some `PF ->
       debug "Creating passthrough VGPUs";
-      let pgpu = allocate_vgpu_to_gpu ~__context vm host vgpu in
+      let pgpu = List.assoc vgpu.vgpu_ref (allocate_vgpu_to_gpu ~__context vm host vgpu) in
       let pci = Db.PGPU.get_PCI ~__context ~self:pgpu in
       add_pcis_to_vm ~__context host vm pci
     | Some `VF ->
       Pool_features.assert_enabled ~__context ~f:Features.VGPU;
       debug "Creating SR-IOV VGPUs";
       if not vgpu_manual_setup then
-        let pgpu = allocate_vgpu_to_gpu ~__context vm host vgpu in
+        let pgpu = List.assoc vgpu.vgpu_ref (allocate_vgpu_to_gpu ~__context vm host vgpu) in
         Db.PGPU.get_PCI ~__context ~self:pgpu
         |> reserve_free_virtual_function ~__context vm
         |> add_pcis_to_vm ~__context host vm
