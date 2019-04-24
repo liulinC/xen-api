@@ -27,7 +27,7 @@ type vgpu_t = {
   requires_passthrough: [ `PF | `VF ] option;
 }
 
-let vgpu_of_vgpu ~__context vm_r vgpu =
+let vgpu_of_vgpu ~__context vgpu =
   let vgpu_r = Db.VGPU.get_record ~__context ~self:vgpu in
   {
     vgpu_ref = vgpu;
@@ -39,7 +39,7 @@ let vgpu_of_vgpu ~__context vm_r vgpu =
   }
 
 let vgpus_of_vm ~__context vm_r =
-  List.map (vgpu_of_vgpu ~__context vm_r) vm_r.API.vM_VGPUs
+  List.map (vgpu_of_vgpu ~__context ) vm_r.API.vM_VGPUs
 
 let fail_creation vm vgpu =
   match vgpu.requires_passthrough with
