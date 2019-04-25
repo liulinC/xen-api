@@ -58,7 +58,13 @@ let fail_creation vm vgpu =
 let allocate_vgpu_to_gpu ?dry_run ?pre_allocate_list ~__context vm host vgpu =
   let available_pgpus = Db.Host.get_PGPUs ~__context ~self:host in
   let compatible_pgpus = Db.GPU_group.get_PGPUs ~__context ~self:vgpu.gpu_group_ref in
+  let pgpu_can_hold_vgpu pgpu vgpu = 
+      try Xapi_pgpu.assert_can_run_VGPU ~__context ~self:pgpu ~vgpu;
+          true
+      with e -> false in
+
   let pgpus = List.intersect compatible_pgpus available_pgpus in
+  let active_pgpus = List.filter ( fun pgpu ->  pgpu_can_hold_vgpu pgpu vgpu.vgpu_ref ) pgpus in
 
   let remaining_capacity_for_vgpu_from_pgpu vgpu pgpu = 
     let db_remaining =  Helpers.call_api_functions ~__context 
@@ -87,7 +93,7 @@ let allocate_vgpu_to_gpu ?dry_run ?pre_allocate_list ~__context vm host vgpu =
   in
   let sorted_pgpus = Helpers.sort_by_schwarzian ~descending:sort_desc
       (fun pgpu -> remaining_capacity_for_vgpu_from_pgpu vgpu pgpu )
-      pgpus
+      active_pgpus
   in
   let rec choose_pgpu = function
     | [] -> None
