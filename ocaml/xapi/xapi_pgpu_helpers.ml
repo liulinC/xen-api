@@ -53,15 +53,15 @@ let assert_VGPU_type_allowed ~__context ~self ~vgpu_type =
   let allocated_vgpu_list = get_allocated_VGPUs ~__context ~self in
   (** Now check whether the requested type is permitted *)
   match allocated_vgpu_list with
-  | [] -> ()
+  | [] -> () (* Not allocated on this pgpu, does not need to check compatibility*)
   | hd::tail -> 
       let grant_vgpu_type_list = List.fold_left
           (fun grant_list current_list -> Listext.List.intersect grant_list current_list) 
           (Db.VGPU_type.get_compatible_types_on_pgpu ~__context ~self:(Db.VGPU.get_type ~__context ~self:hd))
           (
               List.map (fun self -> Db.VGPU.get_type ~__context ~self) tail
-              |> List.map (fun self -> Db.VGPU_type.get_compatible_types_on_pgpu ~__context ~self)
               |> List.sort_uniq Pervasives.compare (* Remove the duplicated elements*)
+              |> List.map (fun self -> Db.VGPU_type.get_compatible_types_on_pgpu ~__context ~self)
           ) in
           if not (List.mem vgpu_type (List.map Ref.of_string (*Remove this when String-> Ref *) grant_vgpu_type_list)) then
               let sep = ";" in

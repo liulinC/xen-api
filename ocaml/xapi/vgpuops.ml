@@ -58,12 +58,13 @@ let fail_creation vm vgpu =
 let allocate_vgpu_to_gpu ?dry_run ?pre_allocate_list ~__context vm host vgpu =
   let available_pgpus = Db.Host.get_PGPUs ~__context ~self:host in
   let compatible_pgpus = Db.GPU_group.get_PGPUs ~__context ~self:vgpu.gpu_group_ref in
+  let pgpus = List.intersect compatible_pgpus available_pgpus in
+
   let pgpu_can_hold_vgpu pgpu vgpu = 
       try Xapi_pgpu.assert_can_run_VGPU ~__context ~self:pgpu ~vgpu;
           true
       with e -> false in
 
-  let pgpus = List.intersect compatible_pgpus available_pgpus in
   let active_pgpus = List.filter ( fun pgpu ->  pgpu_can_hold_vgpu pgpu vgpu.vgpu_ref ) pgpus in
 
   let remaining_capacity_for_vgpu_from_pgpu vgpu pgpu = 
@@ -71,8 +72,9 @@ let allocate_vgpu_to_gpu ?dry_run ?pre_allocate_list ~__context vm host vgpu =
         (fun rpc session_id ->
              Client.Client.PGPU.get_remaining_capacity ~rpc ~session_id
                ~self:pgpu ~vgpu_type:vgpu.type_ref) in
-    (* Check if any pre-allocation existed, this pre-allocation is not reflected
-     * in the database, usually in the dry run mode*)
+    (* Check if any pre-allocation existed, the pre-allocation is not reflected
+     * in the database, usually in the dry run mode, with following format
+     * [(v1,p1);(v2,p2);(v3,p1)...]*)
     match pre_allocate_list with
     | Some pre_allocate_list ->
         let virtul_allocation = List.fold_left (fun num ele ->
@@ -81,6 +83,7 @@ let allocate_vgpu_to_gpu ?dry_run ?pre_allocate_list ~__context vm host vgpu =
             |(_,_) -> num )
         0L pre_allocate_list in
             Int64.sub db_remaining  virtul_allocation
+            (* Probablly need check here, assert >0*)
     | _ -> db_remaining 
   in
 
