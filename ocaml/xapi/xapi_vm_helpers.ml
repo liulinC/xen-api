@@ -689,16 +689,23 @@ let get_group_key ~__context ~vm =
   | Some x -> x
   | None -> `Other
 
-let group_hosts_by_best_pgpu ~__context vgpu =
-  let vgpu_type = Db.VGPU.get_type ~__context ~self:vgpu in
-  let gpu_group = Db.VGPU.get_GPU_group ~__context ~self:vgpu in
-  match
-    Xapi_gpu_group.get_remaining_capacity_internal ~__context
-      ~self:gpu_group ~vgpu_type
-  with
-  | Either.Left e -> raise e
-  | Either.Right _ -> ();
-    group_hosts_by_best_pgpu_in_group ~__context gpu_group vgpu_type
+let group_hosts_by_best_first_vgpu ~__context vgpu visible_hosts =
+  match visible_hosts with
+  | [] -> raise (Api_errors.Server_error (Api_errors.no_hosts_available, []))(* Refine error details*)
+  | hosts ->
+    let vgpu_type = Db.VGPU.get_type ~__context ~self:vgpu in
+    let gpu_group = Db.VGPU.get_GPU_group ~__context ~self:vgpu in
+    let ordering =
+      match Db.GPU_group.get_allocation_algorithm ~__context ~self:gpu_group with
+      | `depth_first -> `ascending | `breadth_first -> `descending
+    in
+    Helpers.group_by ~ordering
+      (fun host ->
+         Db.Host.get_PGPUs ~__context ~self:host
+         |> Listext.List.intersect  (Db.GPU_group.get_PGPUs ~__context ~self:gpu_group)
+         |> List.fold_left ( fun count self ->
+             Int64.add count (Xapi_pgpu_helpers.get_remaining_capacity ~__context ~self ~vgpu_type)) 0L
+      ) visible_hosts
     |> List.map (fun g -> List.map (fun (h,_)-> h) g)
 
 (* Selects a single host from the set of all hosts on which the given [vm] can boot. 
@@ -713,7 +720,12 @@ let choose_host_for_vm_no_wlb ~__context ~vm ~snapshot =
   let host_lists =
     match group_key with
     | `Other -> [all_hosts]
-    | `VGPU vgpu -> group_hosts_by_best_pgpu ~__context vgpu
+    | `VGPU vgpu ->
+      let can_host_vm ~__context host vm =
+        try assert_gpus_available ~__context ~self:vm ~host;true
+        with _ -> false in
+      let visible_hosts = List.filter (fun self -> can_host_vm ~__context self vm) all_hosts in
+      group_hosts_by_best_first_vgpu ~__context vgpu visible_hosts
     | `Netsriov network ->
       let host_group = Xapi_network_sriov_helpers.group_hosts_by_best_sriov ~__context ~network
                        |> List.map (fun g -> List.map (fun (h,_)-> h) g)
