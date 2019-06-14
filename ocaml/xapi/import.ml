@@ -1281,6 +1281,13 @@ module VGPU : HandlerTools = struct
             if config.full_restore then Db.VGPU.set_uuid ~__context ~self:vgpu ~value:value.API.vGPU_uuid;
             vgpu) vgpu_record
         in
+          debug "Lin =====> dump vgpu info";
+          let uuid = Db.VGPU.get_uuid ~__context ~self:vgpu in
+          let type_id = Db.VGPU.get_type ~__context ~self:vgpu
+            |> (fun self-> Db.VGPU_type.get_internal_config ~__context ~self)
+            |> List.assoc Xapi_globs.vgpu_type_id in
+          debug "get uuid: %s, type_id: %s" uuid type_id;
+
         state.cleanup <- (fun __context rpc session_id -> Client.VGPU.destroy rpc session_id vgpu) :: state.cleanup;
         (* Now that we can import/export suspended VMs we need to preserve the currently_attached flag *)
         if Db.VM.get_power_state ~__context ~self:vgpu_record.API.vGPU_VM <> `Halted then
