@@ -890,6 +890,8 @@ let sm_plugins = ref [ ]
 let accept_sm_plugin name =
   List.(fold_left (||) false (map (function `All -> true | `Sm x -> String.lowercase_ascii x = String.lowercase_ascii name) !sm_plugins))
 
+let nvidia_multi_vgpu_enabled_driver_versions = ref ["430.19"]
+
 let other_options = [
   gen_list_option "sm-plugins"
     "space-separated list of storage plugins to allow."
@@ -982,6 +984,10 @@ let other_options = [
 
   "nvidia_compat_lookup_file", Arg.Set_string nvidia_compat_lookup_file,
   (fun () -> !nvidia_compat_lookup_file), "Path to the file with NVidia vGPU compat data for use by xenopsd";
+
+  "nvidia_multi_vgpu_enabled_driver_versions", Arg.String (fun x -> nvidia_multi_vgpu_enabled_driver_versions := String.split ',' x),
+  (fun () -> String.concat "," !nvidia_multi_vgpu_enabled_driver_versions), "list of nvidia host driver versions with multiple vGPU supported.
+  if a version end with +, it means any driver version greater or equal than that version";
 ]
 
 let all_options = options_of_xapi_globs_spec @ other_options
