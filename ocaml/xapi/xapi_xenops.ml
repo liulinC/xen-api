@@ -667,10 +667,19 @@ module MD = struct
                   |> List.assoc Xapi_globs.vgpu_type_id in
     let uuid = vgpu.Db_actions.vGPU_uuid in
     let extra_args = vgpu.Db_actions.vGPU_extra_args in
+    let config_file = match Xapi_vgpu_type.Vendor_nvidia.is_host_driver_support_multi_vgpu () with
+      | true -> None
+      | false -> (* Host driver does not support multiple vGPU, prepare config_file for the legency mode *)
+        let config_dir =  "/usr/share/nvidia/vgx" in
+        let model_name_in_config_file = Db.VGPU_type.get_model_name ~__context ~self:vgpu_type (* like "GRID M10-8Q" *)
+                                        |> String.split_on_char ' ' |> String.concat "_" |> String.lowercase_ascii in
+        let path = Printf.sprintf "%s/%s.conf" config_dir model_name_in_config_file in
+        if Sys.file_exists path then Some path
+        else raise (Api_errors.Server_error (Api_errors.internal_error,["Host driver does not support multiple VGPU and cannot find config_file "^ path ^ " for legency mode"])) in
     let implementation =
       Nvidia {
         physical_pci_address = None; (* unused *)
-        config_file = None; (* unused *)
+        config_file;
         virtual_pci_address;
         type_id  = Some type_id;
         uuid = Some uuid;

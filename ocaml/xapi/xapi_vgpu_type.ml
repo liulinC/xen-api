@@ -363,6 +363,32 @@ module Vendor_nvidia = struct
   let pt_when_vgpu = true
   let whitelist_file () = !Xapi_globs.nvidia_whitelist
   let device_id_of_conf conf = conf.identifier.Identifier.pdev_id
+  
+  let default_host_driver_version = "0.0"
+  let host_driver_version = try Scanf.sscanf (Unix.readlink !Xapi_globs.nvidia_host_driver_file) "libnvidia-vgpu.so.%s" (fun x -> x)
+    with _ -> info "can not get the file version of the %s, use the default value" !Xapi_globs.nvidia_host_driver_file; default_host_driver_version
+
+  let is_host_driver_support_multi_vgpu () =
+    List.mem host_driver_version !Xapi_globs.nvidia_multi_vgpu_enabled_driver_versions ||
+    (
+      let from_version_on_mark = '+' in
+      let host_driver_major_version, host_driver_minor_version = try Scanf.sscanf host_driver_version "%d.%d" (fun x y -> x , y)
+        with _ -> info "get error when parse the host driver version: %s" host_driver_version;
+          Scanf.sscanf default_host_driver_version "%d.%d" (fun x y -> x , y) in (* If cannot parse host driver version, we use the default one,
+                                                                                    which would be taken as not support multiple vGPU *)
+
+      !Xapi_globs.nvidia_multi_vgpu_enabled_driver_versions
+      |> List.filter (fun x -> String.length x > 1)
+      |> List.filter (fun x -> String.get x (String.length x -1) = from_version_on_mark)(* Ending with "+" *)
+      |> List.filter_map ( fun x -> try Scanf.sscanf x "%d.%d" (fun x y -> Some (x , y))
+                           with _ -> None)
+      |> List.exists ( fun (major_version, minor_version) ->
+          match host_driver_major_version - major_version, host_driver_minor_version - minor_version with
+          | _ as x, _ when x > 0 -> true
+          | 0, (_ as y) when y >= 0 -> true
+          | _ -> false
+        )
+    )
 
   (* A type to capture the XML tree with functions for use in Xmlm.input_doc_tree *)
   type tree = E of string * (string * string) list * tree list | D of string
@@ -432,6 +458,7 @@ module Vendor_nvidia = struct
       - Find the vgpuType elements that match the vgpu type ids found above,
         and construct vgpu_conf records.
     *)
+    let driver_support_multiple_vgpu = is_host_driver_support_multi_vgpu () in
     List.filter_map (fun vgpu_type ->
       let id = get_attr "id" vgpu_type in
       if List.mem_assoc id vgpu_ids then
@@ -460,8 +487,8 @@ module Vendor_nvidia = struct
         let name = get_attr "name" vgpu_type in
         info "Getting multiple vGPU supported from config file: %Ld, model: %s" multi_vgpu_supported name;
         let compatible_model_names_in_vm, compatible_model_names_on_pgpu =
-          match multi_vgpu_supported with
-          | 1L -> [name], [name]
+          match multi_vgpu_supported, driver_support_multiple_vgpu with
+          | 1L, true -> [name], [name]
           | _ -> [], [name]
         in
         Some {identifier; framebufferlength;

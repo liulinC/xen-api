@@ -448,6 +448,7 @@ let mxgpu_vgpus_per_pgpu = "vgpus_per_pgpu"
 
 let nvidia_vgpu_first_slot_in_guest = 11
 let nvidia_compat_lookup_file = ref "/var/run/nonpersistent/xapi/nvidia_compat_lookup"
+let nvidia_host_driver_file = ref "/usr/lib64/libnvidia-vgpu.so"
 
 let wlb_timeout = "wlb_timeout"
 let wlb_reports_timeout = "wlb_reports_timeout"
@@ -890,7 +891,7 @@ let sm_plugins = ref [ ]
 let accept_sm_plugin name =
   List.(fold_left (||) false (map (function `All -> true | `Sm x -> String.lowercase_ascii x = String.lowercase_ascii name) !sm_plugins))
 
-let nvidia_multi_vgpu_enabled_driver_versions = ref ["430.19"]
+let nvidia_multi_vgpu_enabled_driver_versions = ref (["430.19"])
 
 let other_options = [
   gen_list_option "sm-plugins"
@@ -984,6 +985,9 @@ let other_options = [
 
   "nvidia_compat_lookup_file", Arg.Set_string nvidia_compat_lookup_file,
   (fun () -> !nvidia_compat_lookup_file), "Path to the file with NVidia vGPU compat data for use by xenopsd";
+
+  "nvidia_host_driver_file", Arg.Set_string nvidia_host_driver_file,
+  (fun () -> !nvidia_host_driver_file), "Path to the Nvidia host driver binary, used to determine current version of Nvidia host driver";
 
   "nvidia_multi_vgpu_enabled_driver_versions", Arg.String (fun x -> nvidia_multi_vgpu_enabled_driver_versions := String.split ',' x),
   (fun () -> String.concat "," !nvidia_multi_vgpu_enabled_driver_versions), "list of nvidia host driver versions with multiple vGPU supported.
