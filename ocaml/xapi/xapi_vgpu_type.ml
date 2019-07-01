@@ -364,9 +364,8 @@ module Vendor_nvidia = struct
   let whitelist_file () = !Xapi_globs.nvidia_whitelist
   let device_id_of_conf conf = conf.identifier.Identifier.pdev_id
   
-  let default_host_driver_version = "0.0"
   let host_driver_version = try Scanf.sscanf (Unix.readlink !Xapi_globs.nvidia_host_driver_file) "libnvidia-vgpu.so.%s" (fun x -> x)
-    with _ -> info "can not get the file version of the %s, use the default value" !Xapi_globs.nvidia_host_driver_file; default_host_driver_version
+    with _ -> info "can not get the file version of the %s, use the default value" !Xapi_globs.nvidia_host_driver_file; Xapi_globs.nvidia_default_host_driver_version
 
   let is_host_driver_support_multi_vgpu () =
     List.mem host_driver_version !Xapi_globs.nvidia_multi_vgpu_enabled_driver_versions ||
@@ -376,7 +375,6 @@ module Vendor_nvidia = struct
         with _ -> info "get error when parse the host driver version: %s" host_driver_version;
           Scanf.sscanf default_host_driver_version "%d.%d" (fun x y -> x , y) in (* If cannot parse host driver version, we use the default one,
                                                                                     which would be taken as not support multiple vGPU *)
-
       !Xapi_globs.nvidia_multi_vgpu_enabled_driver_versions
       |> List.filter (fun x -> String.length x > 1)
       |> List.filter (fun x -> String.get x (String.length x -1) = from_version_on_mark)(* Ending with "+" *)

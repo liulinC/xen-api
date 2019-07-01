@@ -892,6 +892,7 @@ let accept_sm_plugin name =
   List.(fold_left (||) false (map (function `All -> true | `Sm x -> String.lowercase_ascii x = String.lowercase_ascii name) !sm_plugins))
 
 let nvidia_multi_vgpu_enabled_driver_versions = ref (["430.19"])
+let nvidia_default_host_driver_version = "0.0"
 
 let other_options = [
   gen_list_option "sm-plugins"
