@@ -749,49 +749,41 @@ let vtpm_update_allowed_operations ~__context ~self =
   let allowed = match state with `Halted -> ops | _ -> [] in
   Db.VTPM.set_allowed_operations ~__context ~self ~value:allowed
 
+let ignored_ops =
+  [
+    `create_template
+  ; `power_state_reset
+  ; `csvm
+  ; `get_boot_record
+  ; `send_sysrq
+  ; `send_trigger
+  ; `query_services
+  ; `shutdown
+  ; `call_plugin
+  ; `changing_memory_live
+  ; `awaiting_memory_live
+  ; `changing_memory_limits
+  ; `changing_shadow_memory_live
+  ; `changing_VCPUs
+  ; `assert_operation_valid
+  ; `data_source_op
+  ; `update_allowed_operations
+  ; `import
+  ; `reverting
+  ]
+
+let allowable_ops =
+  List.filter (fun op -> not (List.mem op ignored_ops)) API.vm_operations__all
+
 let update_allowed_operations ~__context ~self =
-  let check_operation_error = check_operation_error ~__context ~ref:self in
   let check accu op =
-    match check_operation_error ~op ~strict:true with
+    match check_operation_error ~__context ~ref:self ~op ~strict:true with
     | None ->
         op :: accu
-    | _ ->
+    | Some _err ->
         accu
   in
-  let allowed =
-    List.fold_left check []
-      [
-        `snapshot
-      ; `copy
-      ; `clone
-      ; `revert
-      ; `checkpoint
-      ; `snapshot_with_quiesce
-      ; `start
-      ; `start_on
-      ; `pause
-      ; `unpause
-      ; `clean_shutdown
-      ; `clean_reboot
-      ; `hard_shutdown
-      ; `hard_reboot
-      ; `suspend
-      ; `resume
-      ; `resume_on
-      ; `export
-      ; `destroy
-      ; `provision
-      ; `changing_VCPUs_live
-      ; `pool_migrate
-      ; `migrate_send
-      ; `make_into_template
-      ; `changing_static_range
-      ; `changing_shadow_memory
-      ; `changing_dynamic_range
-      ; `changing_NVRAM
-      ; `create_vtpm
-      ]
-  in
+  let allowed = List.fold_left check [] allowable_ops in
   (* FIXME: need to be able to deal with rolling-upgrade for orlando as well *)
   let allowed =
     if Helpers.rolling_upgrade_in_progress ~__context then
@@ -816,6 +808,42 @@ let checkpoint_in_progress ~__context ~vm =
     (List.map snd (Db.VM.get_current_operations ~__context ~self:vm))
   |> List.mem `checkpoint
 
+let remove_pending_guidance ~__context ~self ~value =
+  let v = Db.VM.get_name_label ~__context ~self in
+  if
+    List.exists
+      (fun g -> g = value)
+      (Db.VM.get_pending_guidances ~__context ~self)
+  then (
+    debug "Remove guidance [%s] from vm [%s]'s pending_guidances list"
+      Updateinfo.Guidance.(of_pending_guidance value |> to_string)
+      v ;
+    Db.VM.remove_pending_guidances ~__context ~self ~value
+  ) ;
+
+  if
+    List.exists
+      (fun g -> g = value)
+      (Db.VM.get_pending_guidances_recommended ~__context ~self)
+  then (
+    debug
+      "Remove guidance [%s] from vm [%s]'s pending_guidances_recommended list"
+      Updateinfo.Guidance.(of_pending_guidance value |> to_string)
+      v ;
+    Db.VM.remove_pending_guidances_recommended ~__context ~self ~value
+  ) ;
+
+  if
+    List.exists
+      (fun g -> g = value)
+      (Db.VM.get_pending_guidances_full ~__context ~self)
+  then (
+    debug "Remove guidance [%s] from vm [%s]'s pending_guidances_full list"
+      Updateinfo.Guidance.(of_pending_guidance value |> to_string)
+      v ;
+    Db.VM.remove_pending_guidances_full ~__context ~self ~value
+  )
+
 (** 1. Called on new VMs (clones, imports) and on server start to manually refresh
     the power state, allowed_operations field etc.  Current-operations won't be
     cleaned
@@ -823,7 +851,11 @@ let checkpoint_in_progress ~__context ~vm =
 let force_state_reset_keep_current_operations ~__context ~self ~value:state =
   (* First update the power_state. Some operations below indirectly rely on this. *)
   Db.VM.set_power_state ~__context ~self ~value:state ;
+  if state = `Suspended then
+    remove_pending_guidance ~__context ~self ~value:`restart_device_model ;
   if state = `Halted then (
+    remove_pending_guidance ~__context ~self ~value:`restart_device_model ;
+    remove_pending_guidance ~__context ~self ~value:`restart_vm ;
     (* mark all devices as disconnected *)
     List.iter
       (fun vbd ->

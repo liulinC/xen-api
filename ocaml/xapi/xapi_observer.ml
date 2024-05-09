@@ -82,15 +82,15 @@ module Observer : ObserverInterface = struct
 
   let init ~__context =
     debug "Observer.init" ;
-    ignore @@ Tracing.main ()
+    ignore @@ Tracing_export.main ()
 
   let set_trace_log_dir ~__context ~dir =
     debug "Observer.set_trace_log_dir" ;
-    Tracing.Export.Destination.File.set_trace_log_dir dir
+    Tracing_export.Destination.File.set_trace_log_dir dir
 
   let set_export_interval ~__context ~interval =
     debug "Observer.set_export_interval" ;
-    Tracing.Export.set_export_interval interval
+    Tracing_export.set_export_interval interval
 
   let set_max_spans ~__context ~spans =
     debug "Observer.set_max_spans" ;
@@ -102,15 +102,15 @@ module Observer : ObserverInterface = struct
 
   let set_max_file_size ~__context ~file_size =
     debug "Observer.set_max_file_size" ;
-    Tracing.Export.Destination.File.set_max_file_size file_size
+    Tracing_export.Destination.File.set_max_file_size file_size
 
   let set_host_id ~__context ~host_id =
     debug "Observer.set_host_id" ;
-    Tracing.Export.set_host_id host_id
+    Tracing_export.set_host_id host_id
 
   let set_compress_tracing_files ~__context ~enabled =
     debug "Observer.set_compress_tracing_files" ;
-    Tracing.Export.Destination.File.set_compress_tracing_files enabled
+    Tracing_export.Destination.File.set_compress_tracing_files enabled
 end
 
 module Xapi_cluster = struct
@@ -220,6 +220,19 @@ module Xapi_cluster = struct
   end
 end
 
+let default_attributes ~__context ~host ~name_label ~component =
+  let pool = Helpers.get_pool ~__context in
+  let host_label = Db.Host.get_name_label ~__context ~self:host in
+  let host_uuid = Db.Host.get_uuid ~__context ~self:host in
+  let pool_uuid = Db.Pool.get_uuid ~__context ~self:pool in
+  [
+    ("xs.pool.uuid", pool_uuid)
+  ; ("xs.host.name", host_label)
+  ; ("xs.host.uuid", host_uuid)
+  ; ("xs.observer.name", name_label)
+  ; ("service.name", to_string component)
+  ]
+
 module ObserverConfig = struct
   type t = {
       otel_service_name: string
@@ -235,7 +248,7 @@ module ObserverConfig = struct
   let rec bugtool_endpoint endpoints =
     match endpoints with
     | x :: _ when x = Tracing.bugtool_name ->
-        Some x
+        Some (Tracing_export.Destination.File.get_trace_log_dir ())
     | _ :: t ->
         bugtool_endpoint t
     | [] ->
@@ -247,12 +260,18 @@ module ObserverConfig = struct
       attrs
 
   let config_of_observer ~__context ~component ~observer =
+    (* In the future this should be updated so that the config is read
+       from and updated instead of being regenerated. *)
     let endpoints = Db.Observer.get_endpoints ~__context ~self:observer in
+    let host = Helpers.get_localhost ~__context in
+    let name_label = Db.Observer.get_name_label ~__context ~self:observer in
     {
-      otel_service_name= component
+      otel_service_name= to_string component
     ; otel_resource_attributes=
         attributes_to_W3CBaggage
-          (Db.Observer.get_attributes ~__context ~self:observer)
+          (Db.Observer.get_attributes ~__context ~self:observer
+          @ default_attributes ~__context ~host ~name_label ~component
+          )
     ; xs_exporter_zipkin_endpoints= zipkin_endpoints endpoints
     ; xs_exporter_bugtool_endpoint= bugtool_endpoint endpoints
     }
@@ -292,8 +311,7 @@ module Dom0ObserverConfig (ObserverComponent : OBSERVER_COMPONENT) :
     if Db.Observer.get_enabled ~__context ~self:observer then (
       let observer_config =
         ObserverConfig.config_of_observer ~__context
-          ~component:(to_string ObserverComponent.component)
-          ~observer
+          ~component:ObserverComponent.component ~observer
       in
       Xapi_stdext_unix.Unixext.mkdir_rec dir_name 0o755 ;
       let file_name = observer_conf_path_of ~uuid in
@@ -429,22 +447,10 @@ let assert_valid_attributes attributes =
     )
     attributes
 
-let default_attributes ~__context ~host ~name_label =
-  let pool = Helpers.get_pool ~__context in
-  let host_label = Db.Host.get_name_label ~__context ~self:host in
-  let host_uuid = Db.Host.get_uuid ~__context ~self:host in
-  let pool_uuid = Db.Pool.get_uuid ~__context ~self:pool in
-  [
-    ("xs.pool.uuid", pool_uuid)
-  ; ("xs.host.name", host_label)
-  ; ("xs.host.uuid", host_uuid)
-  ; ("xs.observer.name", name_label)
-  ]
-
 let register_component ~__context ~self ~host ~component =
   let name_label = Db.Observer.get_name_label ~__context ~self in
   let attributes =
-    default_attributes ~__context ~host ~name_label
+    default_attributes ~__context ~host ~name_label ~component
     @ Db.Observer.get_attributes ~__context ~self
   in
   let uuid = Db.Observer.get_uuid ~__context ~self in
@@ -564,7 +570,7 @@ let initialise ~__context =
          |> observed_components_of
          |> List.iter (initialise_observer_component ~__context)
      ) ;
-  Tracing.Export.set_service_name "xapi"
+  Tracing_export.set_service_name "xapi"
 
 let set_hosts ~__context ~self ~value =
   assert_valid_hosts ~__context value ;
@@ -603,13 +609,15 @@ let set_attributes ~__context ~self ~value =
   let uuid = Db.Observer.get_uuid ~__context ~self in
   let host = Helpers.get_localhost ~__context in
   let name_label = Db.Observer.get_name_label ~__context ~self in
-  let default_attributes = default_attributes ~__context ~host ~name_label in
   let observation_fn () =
     List.iter
       (fun c ->
         let module Forwarder = (val get_forwarder c : ObserverInterface) in
         Forwarder.set_attributes ~__context ~uuid
-          ~attributes:(default_attributes @ value)
+          ~attributes:
+            (default_attributes ~__context ~host ~name_label ~component:c
+            @ value
+            )
       )
       (Db.Observer.get_components ~__context ~self
       |> List.map of_string

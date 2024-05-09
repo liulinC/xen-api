@@ -488,7 +488,7 @@ let remove_vmpp =
       (fun ~__context ->
         let vmpps = Db.VMPP.get_all ~__context in
         List.iter (fun self -> Db.VMPP.destroy ~__context ~self) vmpps ;
-        let open Db_filter_types in
+        let open Xapi_database.Db_filter_types in
         let vms =
           Db.VM.get_refs_where ~__context
             ~expr:
@@ -859,6 +859,51 @@ let empty_pool_uefi_certificates =
       )
   }
 
+(* 1. Replace reboot_host_on_livepatch_failure in host.pending_guidances \
+ *    with reboot_host_on_kernel_livepatch_failure and \
+ *    reboot_host_on_xen_livepatch_failure in \
+ *    host.pending_guidances_recommended.
+ * 2. Move the rest guidances in \
+ *    host.pending_guidances into host.pending_guidances_recommended *)
+let upgrade_update_guidance =
+  {
+    description=
+      "Upgrade pending update gudiances"
+      (* TODO: update below schema version to which the feature branch got merged with *)
+  ; version=
+      (fun x ->
+        x
+        < ( Datamodel_common.nile_release_schema_major_vsn
+          , Datamodel_common.nile_release_schema_minor_vsn
+          )
+      )
+      (* the version where update guidance improvement is made *)
+  ; fn=
+      (fun ~__context ->
+        Db.Host.get_all ~__context
+        |> List.iter (fun self ->
+               if
+                 List.mem `reboot_host_on_livepatch_failure
+                   (Db.Host.get_pending_guidances ~__context ~self)
+               then (
+                 Db.Host.add_pending_guidances_recommended ~__context ~self
+                   ~value:`reboot_host_on_kernel_livepatch_failure ;
+                 Db.Host.add_pending_guidances_recommended ~__context ~self
+                   ~value:`reboot_host_on_xen_livepatch_failure ;
+                 Db.Host.remove_pending_guidances ~__context ~self
+                   ~value:`reboot_host_on_livepatch_failure
+               ) ;
+               List.iter
+                 (fun g ->
+                   Db.Host.add_pending_guidances_recommended ~__context ~self
+                     ~value:g
+                 )
+                 (Db.Host.get_pending_guidances ~__context ~self) ;
+               Db.Host.set_pending_guidances ~__context ~self ~value:[]
+           )
+      )
+  }
+
 let rules =
   [
     upgrade_domain_type
@@ -887,14 +932,16 @@ let rules =
   ; upgrade_secrets
   ; remove_legacy_ssl_support
   ; empty_pool_uefi_certificates
+  ; upgrade_update_guidance
   ]
 
 (* Maybe upgrade most recent db *)
 let maybe_upgrade ~__context =
   let db_ref = Context.database_of __context in
+  let open Xapi_database in
   let db = Db_ref.get_database db_ref in
   let ((previous_major_vsn, previous_minor_vsn) as previous_vsn) =
-    Db_cache_types.Manifest.schema (Db_cache_types.Database.manifest db)
+    Db_cache_types.(Manifest.schema (Database.manifest db))
   in
   let ((latest_major_vsn, latest_minor_vsn) as latest_vsn) =
     (Datamodel_common.schema_major_vsn, Datamodel_common.schema_minor_vsn)

@@ -1261,8 +1261,6 @@ let invalid_repomd_xml = "INVALID_REPOMD_XML"
 
 let get_updates_failed = "GET_UPDATES_FAILED"
 
-let get_updates_in_progress = "GET_UPDATES_IN_PROGRESS"
-
 let apply_updates_in_progress = "APPLY_UPDATES_IN_PROGRESS"
 
 let apply_updates_failed = "APPLY_UPDATES_FAILED"
@@ -1281,14 +1279,14 @@ let invalid_repository_domain_allowlist = "INVALID_REPOSITORY_DOMAIN_ALLOWLIST"
 
 let apply_livepatch_failed = "APPLY_LIVEPATCH_FAILED"
 
-let updates_require_recommended_guidance =
-  "UPDATES_REQUIRE_RECOMMENDED_GUIDANCE"
-
-let update_guidance_changed = "UPDATE_GUIDANCE_CHANGED"
-
 let invalid_update_sync_day = "INVALID_UPDATE_SYNC_DAY"
 
 let no_repositories_configured = "NO_REPOSITORIES_CONFIGURED"
+
+let host_pending_mandatory_guidances_not_empty =
+  "HOST_PENDING_MANDATORY_GUIDANCE_NOT_EMPTY"
+
+let host_evacuation_is_required = "HOST_EVACUATION_IS_REQUIRED"
 
 (* VTPMs *)
 

@@ -20,7 +20,7 @@ module Unixext = Xapi_stdext_unix.Unixext
 module Date = Xapi_stdext_date.Date
 open Xapi_vm_memory_constraints
 open Vm_memory_constraints
-open Db_filter_types
+open Xapi_database.Db_filter_types
 open Network
 module XenAPI = Client.Client
 
@@ -292,7 +292,8 @@ and create_domain_zero_record ~__context ~domain_zero_ref (host_info : host_info
     ~version:0L ~generation_id:"" ~hardware_platform_version:0L
     ~has_vendor_device:false ~requires_reboot:false ~reference_label:""
     ~domain_type:Xapi_globs.domain_zero_domain_type ~nVRAM:[]
-    ~pending_guidances:[] ~recommended_guidances:[] ;
+    ~pending_guidances:[] ~recommended_guidances:[]
+    ~pending_guidances_recommended:[] ~pending_guidances_full:[] ;
   ensure_domain_zero_metrics_record ~__context ~domain_zero_ref host_info ;
   Db.Host.set_control_domain ~__context ~self:localhost ~value:domain_zero_ref ;
   Xapi_vm_helpers.update_memory_overhead ~__context ~vm:domain_zero_ref
@@ -566,6 +567,7 @@ let create_host_cpu ~__context host_info =
         [
           ("cpu_count", string_of_int cpu_info.cpu_count)
         ; ("socket_count", string_of_int cpu_info.socket_count)
+        ; ("threads_per_core", string_of_int cpu_info.threads_per_core)
         ; ("vendor", cpu_info.vendor)
         ; ("speed", cpu_info.speed)
         ; ("modelname", cpu_info.modelname)
@@ -591,10 +593,11 @@ let create_host_cpu ~__context host_info =
       let old_cpu_info = Db.Host.get_cpu_info ~__context ~self:host in
       debug
         "create_host_cpuinfo: setting host cpuinfo: socket_count=%d, \
-         cpu_count=%d, features_hvm=%s, features_pv=%s, features_hvm_host=%s, \
-         features_pv_host=%s"
+         cpu_count=%d, threads_per_core=%d, features_hvm=%s, features_pv=%s, \
+         features_hvm_host=%s, features_pv_host=%s"
         (Map_check.getf socket_count cpu)
         (Map_check.getf cpu_count cpu)
+        (Map_check.getf threads_per_core cpu)
         (Map_check.getf features_hvm cpu |> CPU_policy.to_string)
         (Map_check.getf features_pv cpu |> CPU_policy.to_string)
         (Map_check.getf features_hvm_host cpu |> CPU_policy.to_string)

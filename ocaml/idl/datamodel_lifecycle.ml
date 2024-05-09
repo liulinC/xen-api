@@ -22,15 +22,15 @@ let prototyped_of_field = function
   | "Repository", "gpgkey_path" ->
       Some "22.12.0"
   | "Cluster_host", "last_update_live" ->
-      Some "24.2.1-next"
+      Some "24.3.0"
   | "Cluster_host", "live" ->
-      Some "24.2.1-next"
+      Some "24.3.0"
   | "Cluster", "live_hosts" ->
-      Some "24.2.1-next"
+      Some "24.3.0"
   | "Cluster", "quorum" ->
-      Some "24.2.1-next"
+      Some "24.3.0"
   | "Cluster", "is_quorate" ->
-      Some "24.2.1-next"
+      Some "24.3.0"
   | "VTPM", "contents" ->
       Some "22.26.0"
   | "VTPM", "is_protected" ->
@@ -39,6 +39,12 @@ let prototyped_of_field = function
       Some "22.26.0"
   | "VTPM", "persistence_backend" ->
       Some "22.26.0"
+  | "host", "last_update_hash" ->
+      Some "24.10.0"
+  | "host", "pending_guidances_full" ->
+      Some "24.10.0"
+  | "host", "pending_guidances_recommended" ->
+      Some "24.10.0"
   | "host", "numa_affinity_policy" ->
       Some "24.0.0"
   | "host", "latest_synced_updates_applied" ->
@@ -49,6 +55,10 @@ let prototyped_of_field = function
       Some "22.27.0"
   | "host", "last_software_update" ->
       Some "22.20.0"
+  | "VM", "pending_guidances_full" ->
+      Some "24.10.0"
+  | "VM", "pending_guidances_recommended" ->
+      Some "24.10.0"
   | "VM", "recommended_guidances" ->
       Some "23.18.0"
   | "VM", "actions__after_softreboot" ->
@@ -99,6 +109,12 @@ let prototyped_of_message = function
       Some "22.20.0"
   | "Repository", "set_gpgkey_path" ->
       Some "22.12.0"
+  | "PCI", "get_dom0_access_status" ->
+      Some "24.14.0"
+  | "PCI", "enable_dom0_access" ->
+      Some "24.14.0"
+  | "PCI", "disable_dom0_access" ->
+      Some "24.14.0"
   | "message", "destroy_many" ->
       Some "22.19.0"
   | "VTPM", "set_contents" ->
@@ -109,6 +125,8 @@ let prototyped_of_message = function
       Some "22.26.0"
   | "VTPM", "create" ->
       Some "22.26.0"
+  | "host", "emergency_clear_mandatory_guidance" ->
+      Some "24.10.0"
   | "host", "apply_recommended_guidances" ->
       Some "23.18.0"
   | "host", "set_https_only" ->

@@ -12,10 +12,24 @@
  * GNU Lesser General Public License for more details.
  *)
 open Tracing
+open Tracing_export
 
 module D = Debug.Make (struct let name = "test_observer" end)
 
 open D
+module ComponentSet = Set.Make (Xapi_observer_components)
+
+let component_set_to_string cs =
+  cs
+  |> ComponentSet.to_seq
+  |> Seq.map Xapi_observer_components.to_string
+  |> List.of_seq
+  |> String.concat ","
+
+let component_set_testable =
+  let pp = Fmt.of_to_string component_set_to_string in
+
+  Alcotest.testable pp ComponentSet.equal
 
 let () = Printexc.record_backtrace true
 
@@ -25,8 +39,8 @@ let trace_log_dir ?(test_name = "") () =
     (Printf.sprintf "%s/var/log/dt/zipkinv2/json/" test_name)
 
 let () =
-  Export.Destination.File.set_trace_log_dir (trace_log_dir ()) ;
-  Export.set_service_name "unit_tests" ;
+  Destination.File.set_trace_log_dir (trace_log_dir ()) ;
+  set_service_name "unit_tests" ;
   set_observe false
 
 module Xapi_DB = struct
@@ -49,17 +63,15 @@ end
 
 module TracerProvider = struct
   let assert_num_observers ~__context x =
-    let providers = Tracing.get_tracer_providers () in
+    let providers = get_tracer_providers () in
     Alcotest.(check int)
       (Printf.sprintf "%d provider(s) exists in lib " x)
       x (List.length providers)
 
   let find_provider_exn ~name =
-    let providers = Tracing.get_tracer_providers () in
+    let providers = get_tracer_providers () in
     match
-      List.find_opt
-        (fun x -> Tracing.TracerProvider.get_name_label x = name)
-        providers
+      List.find_opt (fun x -> TracerProvider.get_name_label x = name) providers
     with
     | Some provider ->
         provider
@@ -70,11 +82,11 @@ module TracerProvider = struct
     let provider = find_provider_exn ~name in
     Alcotest.(check bool)
       "Provider disabled" false
-      (Tracing.TracerProvider.get_enabled provider)
+      (TracerProvider.get_enabled provider)
 
   let assert_mandatory_attributes ~name =
     let provider = find_provider_exn ~name in
-    let tags = Tracing.TracerProvider.get_attributes provider in
+    let tags = TracerProvider.get_attributes provider in
     List.iter
       (fun x ->
         try
@@ -82,12 +94,18 @@ module TracerProvider = struct
           ()
         with _ -> Alcotest.failf "Missing mandatory attribute: %s" x
       )
-      ["xs.pool.uuid"; "xs.host.name"; "xs.host.uuid"; "xs.observer.name"]
+      [
+        "xs.pool.uuid"
+      ; "xs.host.name"
+      ; "xs.host.uuid"
+      ; "xs.observer.name"
+      ; "service.name"
+      ]
 
   let check_endpoints ~name ~endpoints =
     let provider = find_provider_exn ~name in
     let provider_endpoints =
-      Tracing.TracerProvider.get_endpoints provider
+      TracerProvider.get_endpoints provider
       |> List.map (fun endpoint ->
              match endpoint with
              | Bugtool ->
@@ -287,6 +305,7 @@ let verify_json_fields_and_values ~json =
             ; ("xs.observer.name", `String "test-observer")
             ; ("xs.host.uuid", `String _)
             ; ("xs.host.name", `String _)
+            ; ("service.name", `String _)
             ]
         )
       ; ("annotations", `List _)
@@ -318,7 +337,7 @@ let test_file_export_writes () =
   let test_trace_log_dir =
     trace_log_dir ~test_name:"test_file_export_writes" ()
   in
-  Export.Destination.File.set_trace_log_dir test_trace_log_dir ;
+  Destination.File.set_trace_log_dir test_trace_log_dir ;
   let __context = Test_common.make_test_database () in
   let self = test_create ~__context ~enabled:true () in
   clear_dir ~test_trace_log_dir () ;
@@ -327,7 +346,7 @@ let test_file_export_writes () =
       match span with
       | Ok x -> (
           let _ = Tracer.finish x in
-          Tracing.Export.Destination.flush_spans () ;
+          Destination.flush_spans () ;
           Alcotest.(check bool)
             "tracing files written to disk when tracing enabled by default"
             false
@@ -345,7 +364,7 @@ let test_file_export_writes () =
           match span with
           | Ok x ->
               let _ = Tracer.finish x in
-              Tracing.Export.Destination.flush_spans () ;
+              Destination.flush_spans () ;
               Alcotest.(check bool)
                 "tracing files not written when tracing disabled" true
                 (is_dir_empty ~test_trace_log_dir)
@@ -404,7 +423,7 @@ let test_hashtbl_leaks () =
         (Tracer.finished_span_hashtbl_is_empty ())
         false ;
 
-      Tracing.Export.Destination.flush_spans () ;
+      Destination.flush_spans () ;
       Alcotest.(check bool)
         "Span export clears finished_spans hashtable"
         (Tracer.finished_span_hashtbl_is_empty ())
@@ -495,18 +514,59 @@ let test_attribute_validation () =
     Alcotest.(check bool)
       ("Good key, value pair with " ^ key ^ ":" ^ value)
       true
-      (Tracing.validate_attribute (key, value))
+      (validate_attribute (key, value))
   in
 
   let test_bad_attribute (key, value) =
     Alcotest.(check bool)
       ("Bad key, value pair with " ^ key ^ ":" ^ value)
       false
-      (Tracing.validate_attribute (key, value))
+      (validate_attribute (key, value))
   in
 
   List.iter test_good_attribute good_attributes ;
   List.iter test_bad_attribute bad_attributes
+
+let test_observed_components_of () =
+  let open Xapi_globs in
+  let open Xapi_observer_components in
+  let original_value = !observer_experimental_components in
+  let remove comp = List.filter (fun c -> comp <> c) in
+  let inputs = [[]; [SMApi]; [Xapi; SMApi]; all] in
+
+  let expected_components_given_config_value =
+    [
+      ( "No experimental component is expected"
+      , StringSet.empty
+      , [remove Xapi_clusterd all; [SMApi]; [Xapi; SMApi]; all]
+      )
+    ; ( "SMapi is experimental component"
+      , StringSet.singleton Constants.observer_component_smapi
+      , [
+          all |> remove Xapi_clusterd |> remove SMApi
+        ; []
+        ; [Xapi]
+        ; remove SMApi all
+        ]
+      )
+    ]
+  in
+
+  let test_exp_comp (msg, v, expected_list) =
+    Xapi_globs.observer_experimental_components := v ;
+    let observed_components = List.map observed_components_of inputs in
+    List.iter2
+      (fun expected received ->
+        Alcotest.(check component_set_testable)
+          msg
+          (ComponentSet.of_list expected)
+          (ComponentSet.of_list received)
+      )
+      expected_list observed_components
+  in
+
+  List.iter test_exp_comp expected_components_given_config_value ;
+  observer_experimental_components := original_value
 
 let test =
   [
@@ -521,6 +581,7 @@ let test =
   ; ("test_hashtbl_leaks", `Quick, test_hashtbl_leaks)
   ; ("test_tracing_exn_backtraces", `Quick, test_tracing_exn_backtraces)
   ; ("test_attribute_validation", `Quick, test_attribute_validation)
+  ; ("test_observed_components_of", `Quick, test_observed_components_of)
   ]
 
 let () =

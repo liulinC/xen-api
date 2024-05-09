@@ -62,7 +62,9 @@ test:
 	 trap "kill $${PSTREE_SLEEP_PID}" SIGINT SIGTERM EXIT; \
 	 timeout --foreground $(TEST_TIMEOUT2) \
 		 dune runtest --profile=$(PROFILE) --error-reporting=twice -j $(JOBS)
+ifneq ($(PY_TEST), NO)
 	dune build @runtest-python --profile=$(PROFILE)
+endif
 
 stresstest:
 	dune build @stresstest --profile=$(PROFILE) --no-buffer -j $(JOBS)
@@ -72,15 +74,20 @@ schema:
 	dune runtest ocaml/idl
 
 doc:
-	dune build --profile=$(PROFILE) ocaml/idl/datamodel_main.exe
+#html
 	dune build --profile=$(PROFILE) -f @ocaml/doc/jsapigen
 	mkdir -p $(XAPIDOC)/html
 	cp -r _build/default/ocaml/doc/api $(XAPIDOC)/html
 	cp _build/default/ocaml/doc/branding.js $(XAPIDOC)/html
 	cp ocaml/doc/*.js ocaml/doc/*.html ocaml/doc/*.css $(XAPIDOC)/html
-	dune exec --profile=$(PROFILE) -- ocaml/idl/datamodel_main.exe -closed -markdown $(XAPIDOC)/markdown
-	cp ocaml/doc/*.dot ocaml/doc/doc-convert.sh $(XAPIDOC)
+#markdown
+	dune build --profile=$(PROFILE) -f @ocaml/idl/markdowngen
+	mkdir -p $(XAPIDOC)/markdown
+	cp -r _build/default/ocaml/idl/autogen/*.md $(XAPIDOC)/markdown
+	cp -r _build/default/ocaml/idl/autogen/*.yml $(XAPIDOC)/markdown
 	find ocaml/doc -name "*.md" -not -name "README.md" -exec cp {} $(XAPIDOC)/markdown/ \;
+#other
+	cp ocaml/doc/*.dot ocaml/doc/doc-convert.sh $(XAPIDOC)
 # Build manpages, networkd generated these
 	dune build --profile=$(PROFILE) -f @man
 
@@ -110,11 +117,15 @@ sdk:
 	sh ocaml/sdk-gen/windows-line-endings.sh $(XAPISDK)/csharp
 	sh ocaml/sdk-gen/windows-line-endings.sh $(XAPISDK)/powershell
 
-# workaround for no .resx generation, just for compilation testing
-sdksanity: sdk
-	sed -i 's/FriendlyErrorNames.ResourceManager/null/g' ./_build/install/default/xapi/sdk/csharp/src/Failure.cs
-	cd _build/install/default/xapi/sdk/csharp/src && dotnet add package Newtonsoft.Json && dotnet build -f netstandard2.0
+.PHONY: sdk-build-c
 
+sdk-build-c: sdk
+	cd _build/install/default/xapi/sdk/c && make clean && make -j $(JOBS)
+
+.PHONY: sdk-build-java
+
+sdk-build-java: sdk
+	cd _build/install/default/xapi/sdk/java && mvn -f xen-api/pom.xml -B clean package install -Drevision=0.0
 
 python:
 	$(MAKE) -C scripts/examples/python build
@@ -141,6 +152,7 @@ install: build doc sdk doc-json
 	mkdir -p $(DESTDIR)/etc/bash_completion.d
 # ocaml/xapi
 	make -C scripts install
+	make -C python3 install
 	cp -f _build/install/default/bin/xapi $(DESTDIR)$(OPTDIR)/bin/xapi
 	scripts/install.sh 755 ocaml/quicktest/quicktest $(DESTDIR)$(OPTDIR)/debug
 	cp -f _build/install/default/bin/quicktestbin $(DESTDIR)$(OPTDIR)/debug/quicktestbin
@@ -241,9 +253,9 @@ install: build doc sdk doc-json
 		gzip http-lib pciutil sexpr stunnel uuid xml-light2 zstd xapi-compression safe-resources \
 		message-switch message-switch-async message-switch-cli message-switch-core message-switch-lwt \
 		message-switch-unix xapi-idl forkexec xapi-forkexecd xapi-storage xapi-storage-script xapi-storage-cli \
-		xapi-nbd varstored-guard xapi-log xapi-open-uri xapi-tracing xapi-expiry-alerts cohttp-posix \
+		xapi-nbd varstored-guard xapi-log xapi-open-uri xapi-tracing xapi-tracing-export xapi-expiry-alerts cohttp-posix \
 		xapi-rrd xapi-inventory \
-		xapi-stdext-date xapi-stdext-encodings xapi-stdext-pervasives xapi-stdext-std xapi-stdext-threads xapi-stdext-unix xapi-stdext-zerocheck xapi-stdext
+		xapi-stdext-date xapi-stdext-encodings xapi-stdext-pervasives xapi-stdext-std xapi-stdext-threads xapi-stdext-unix xapi-stdext-zerocheck
 # docs
 	mkdir -p $(DESTDIR)$(DOCDIR)
 	cp -r $(XAPIDOC)/jekyll $(DESTDIR)$(DOCDIR)
@@ -263,9 +275,9 @@ uninstall:
 		gzip http-lib pciutil sexpr stunnel uuid xml-light2 zstd xapi-compression safe-resources \
 		message-switch message-switch-async message-switch-cli message-switch-core message-switch-lwt \
 		message-switch-unix xapi-idl forkexec xapi-forkexecd xapi-storage xapi-storage-script xapi-log \
-		xapi-open-uri xapi-tracing xapi-expiry-alerts cohttp-posix \
+		xapi-open-uri xapi-tracing xapi-tracing-export xapi-expiry-alerts cohttp-posix \
 		xapi-rrd xapi-inventory \
-		xapi-stdext-date xapi-stdext-encodings xapi-stdext-pervasives xapi-stdext-std xapi-stdext-threads xapi-stdext-unix xapi-stdext-zerocheck xapi-stdext
+		xapi-stdext-date xapi-stdext-encodings xapi-stdext-pervasives xapi-stdext-std xapi-stdext-threads xapi-stdext-unix xapi-stdext-zerocheck
 
 compile_flags.txt: Makefile
 	(ocamlc -config-var ocamlc_cflags;\

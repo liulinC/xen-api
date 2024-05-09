@@ -97,6 +97,10 @@ let rel_stockholm = "stockholm"
 
 let rel_stockholm_psr = "stockholm_psr"
 
+let rel_nile_preview = "nile-preview"
+
+let rel_nile = "nile"
+
 type api_release = {
     code_name: string option
   ; version_major: int
@@ -334,6 +338,20 @@ let release_order_full =
     ; branding= "Citrix Hypervisor 8.2 Hotfix 2"
     ; release_date= Some "November 2020"
     }
+  ; {
+      code_name= Some rel_nile_preview
+    ; version_major= 2
+    ; version_minor= 20
+    ; branding= "XenServer 8 Preview"
+    ; release_date= Some "August 2023"
+    }
+  ; {
+      code_name= Some rel_nile
+    ; version_major= 2
+    ; version_minor= 21
+    ; branding= "XenServer 8"
+    ; release_date= None
+    }
   ]
 (* When you add a new release, use the version number of the latest release, "Unreleased"
    for the branding, and Some "" for the release date, until the actual values are finalised. *)
@@ -405,7 +423,6 @@ type api_value =
   | VMap of (api_value * api_value) list
   | VSet of api_value list
   | VRef of string
-  | VCustom of string * api_value
 [@@deriving rpc]
 
 (* For convenience, we use the same value here as is defined in the Ref module in
@@ -748,7 +765,5 @@ let rec type_checks v t =
       all_true (List.map (fun v -> type_checks v t) vl)
   | VRef _, Ref _ ->
       true
-  | VCustom _, _ ->
-      true (* Type checks defered to phase-2 compile time *)
   | _, _ ->
       false

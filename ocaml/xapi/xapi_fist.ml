@@ -66,6 +66,9 @@ let fail_healthcheck () = fistpoint "fail_healthcheck"
 
 let reconfigure_host () = fistpoint "reconfigure_host"
 
+(** allow starting up a corosync2 cluster *)
+let allow_corosync2 () = fistpoint "allow_corosync2"
+
 (** Raise MTC_EXIT_CAN_NOT_ACCESS_STATEFILE *)
 let ha_cannot_access_statefile () = fistpoint "ha_cannot_access_statefile"
 
@@ -160,3 +163,5 @@ let int_seed name : int option =
 let exchange_certificates_in_pool () : int option =
   let name = "exchange_certificates_in_pool" in
   int_seed name
+
+let disable_xapi_guard_cache () = fistpoint "disable_xapi_guard_cache"

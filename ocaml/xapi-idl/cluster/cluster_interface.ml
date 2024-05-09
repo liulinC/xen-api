@@ -2,6 +2,7 @@
 
 open Rpc
 open Idl
+open Ipaddr_rpc_type
 
 let service_name = "cluster"
 
@@ -15,12 +16,45 @@ type debug_info = string [@@deriving rpcty]
 (** Name of the cluster *)
 type cluster_name = string [@@deriving rpcty]
 
-(** An IPv4 address (a.b.c.d) *)
-type address = IPv4 of string [@@deriving rpcty]
+type ip = IPv4 of string | IPv6 of string [@@deriving rpcty]
 
-let printaddr () = function IPv4 s -> Printf.sprintf "IPv4(%s)" s
+let string_of_ip = Ipaddr.to_string
 
-let str_of_address address = match address with IPv4 a -> a
+(** this address includes the hostname and hostuuid along with an ip address
+  this is done to maintain backwards compatability, and should be combined with
+  the other variant in the future.
+  *)
+type extended_addr = {ip: Ipaddr.t; hostuuid: string; hostname: string}
+[@@deriving rpcty]
+
+type address = IPv4 of string | Extended of extended_addr [@@deriving rpcty]
+
+let ipstr_of_address = function
+  | IPv4 a ->
+      a
+  | Extended {ip; _} ->
+      string_of_ip ip
+
+let ipaddr_of_address = function
+  | IPv4 _ as ip ->
+      ip
+  | Extended {ip; _} ->
+      (* FIXME: introduce IPv6 variant when IPv6 support is added *)
+      IPv4 (string_of_ip ip)
+
+(** The complete address potentially including uuid and hostname *)
+let fullstr_of_address = function
+  | IPv4 a ->
+      a
+  | Extended {ip; hostuuid; hostname} ->
+      Printf.sprintf "(%s, %s, %s)" (string_of_ip ip) hostuuid hostname
+
+let printaddr () = function
+  | IPv4 s ->
+      Printf.sprintf "IPv4(%s)" s
+  | Extended {ip; hostuuid; hostname} ->
+      Printf.sprintf "IP(%s) hostuuid (%s) hostname(%s)" (string_of_ip ip)
+        hostuuid hostname
 
 type addresslist = address list [@@deriving rpcty]
 
@@ -37,13 +71,53 @@ type node = {addr: address; id: nodeid} [@@deriving rpcty]
 
 type all_members = node list [@@deriving rpcty]
 
+module Cluster_stack = struct
+  exception Unsupported_Cluster_stack of {cluster_stack: string; version: int64}
+
+  exception Unsupported_transport of string
+
+  type t = Corosync2 | Corosync3 [@@deriving rpcty]
+
+  type transport = Udpu | Knet [@@deriving rpcty]
+
+  let transport_to_stack = function Udpu -> Corosync2 | Knet -> Corosync3
+
+  let transport_of_string = function
+    | "udpu" ->
+        Udpu
+    | "knet" ->
+        Knet
+    | s ->
+        raise (Unsupported_transport s)
+
+  let transport_to_string = function Udpu -> "udpu" | Knet -> "knet"
+
+  let cluster_stack_to_transport = function
+    | Corosync2 ->
+        Udpu
+    | Corosync3 ->
+        Knet
+
+  let cluster_stack_of_transport ts =
+    ts |> transport_of_string |> transport_to_stack
+
+  let of_version = function
+    | "corosync", 2L ->
+        Corosync2
+    | "corosync", 3L ->
+        Corosync3
+    | cluster_stack, version ->
+        raise (Unsupported_Cluster_stack {cluster_stack; version})
+end
+
 (** This type contains all of the information required to initialise the
     cluster. All optional params will have the recommended defaults if None. *)
 type init_config = {
-    local_ip: address
+    member: address
   ; token_timeout_ms: int64 option
   ; token_coefficient_ms: int64 option
   ; name: string option
+  ; cluster_stack: Cluster_stack.t
 }
 [@@deriving rpcty]
 
@@ -58,6 +132,7 @@ type cluster_config = {
   ; config_version: int64
   ; cluster_token_timeout_ms: int64
   ; cluster_token_coefficient_ms: int64
+  ; cluster_stack: Cluster_stack.t
 }
 [@@deriving rpcty]
 
@@ -283,6 +358,12 @@ module LocalAPI (R : RPC) = struct
       @-> enabled_p
       @-> returning unit_p err
       )
+
+  let switch_cluster_stack =
+    let cluster_stack_p = Param.mk ~name:"cluster_stack" my_string in
+    declare "switch_cluster_stack_version"
+      ["Switch cluster stack version to the target"]
+      (debug_info_p @-> cluster_stack_p @-> returning unit_p err)
 
   module UPDATES = struct
     open TypeCombinators

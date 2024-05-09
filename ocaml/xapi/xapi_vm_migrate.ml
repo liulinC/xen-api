@@ -479,6 +479,9 @@ let remove_stale_pcis ~__context ~vm =
 let pool_migrate_complete ~__context ~vm ~host:_ =
   let id = Db.VM.get_uuid ~__context ~self:vm in
   debug "VM.pool_migrate_complete %s" id ;
+  (* clear RestartDeviceModel guidance on VM migrate *)
+  Xapi_vm_lifecycle.remove_pending_guidance ~__context ~self:vm
+    ~value:`restart_device_model ;
   let dbg = Context.string_of_task __context in
   let queue_name = Xapi_xenops_queue.queue_of_vm ~__context ~self:vm in
   if Xapi_xenops.vm_exists_in_xenopsd queue_name dbg id then (
@@ -1717,9 +1720,6 @@ let assert_can_migrate ~__context ~vm ~dest ~live:_ ~vdi_map ~vif_map ~options
     try bool_of_string (List.assoc "force" options) with _ -> false
   in
   let copy = try bool_of_string (List.assoc "copy" options) with _ -> false in
-  if copy && Db.VM.get_has_vendor_device ~__context ~self:vm then
-    Pool_features.assert_enabled ~__context
-      ~f:Features.PCI_device_for_auto_update ;
   let source_host_ref =
     let host = Db.VM.get_resident_on ~__context ~self:vm in
     if host <> Ref.null then
@@ -1972,7 +1972,7 @@ let vdi_pool_migrate ~__context ~vdi ~sr ~options =
   let management_if =
     Xapi_inventory.lookup Xapi_inventory._management_interface
   in
-  let open Db_filter_types in
+  let open Xapi_database.Db_filter_types in
   let networks =
     Db.Network.get_records_where ~__context
       ~expr:(Eq (Field "bridge", Literal management_if))

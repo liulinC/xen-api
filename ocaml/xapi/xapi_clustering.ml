@@ -13,6 +13,7 @@
  *)
 
 open Cluster_interface
+open Xapi_cluster_helpers
 
 module D = Debug.Make (struct let name = "xapi_clustering" end)
 
@@ -51,7 +52,7 @@ let pif_of_host ~__context (network : API.ref_network) (host : API.ref_host) =
   let pifs =
     Db.PIF.get_records_where ~__context
       ~expr:
-        Db_filter_types.(
+        Xapi_database.Db_filter_types.(
           And
             ( Eq (Literal (Ref.string_of host), Field "host")
             , Eq (Literal (Ref.string_of network), Field "network")
@@ -117,10 +118,12 @@ let handle_error = function
       failwith ("Unix Error: " ^ message)
 
 let assert_cluster_host_can_be_created ~__context ~host =
-  match
-    Db.Cluster_host.get_refs_where ~__context
-      ~expr:Db_filter_types.(Eq (Literal (Ref.string_of host), Field "host"))
-  with
+  let expr =
+    Xapi_database.Db_filter_types.(
+      Eq (Literal (Ref.string_of host), Field "host")
+    )
+  in
+  match Db.Cluster_host.get_refs_where ~__context ~expr with
   | [] ->
       ()
   | _ ->
@@ -136,10 +139,10 @@ let assert_cluster_host_can_be_created ~__context ~host =
     [get_required_cluster_stacks context sr_sm_type]
     should be configured and running for SRs of type [sr_sm_type] to work. *)
 let get_required_cluster_stacks ~__context ~sr_sm_type =
-  let sms_matching_sr_type =
-    Db.SM.get_records_where ~__context
-      ~expr:Db_filter_types.(Eq (Field "type", Literal sr_sm_type))
+  let expr =
+    Xapi_database.Db_filter_types.(Eq (Field "type", Literal sr_sm_type))
   in
+  let sms_matching_sr_type = Db.SM.get_records_where ~__context ~expr in
   sms_matching_sr_type
   |> List.map (fun (_sm_ref, sm_rec) -> sm_rec.API.sM_required_cluster_stack)
   (* We assume that we only have one SM for each SR type, so this is only to satisfy type checking *)
@@ -165,10 +168,12 @@ let with_clustering_lock_if_cluster_exists ~__context where f =
       with_clustering_lock where f
 
 let find_cluster_host ~__context ~host =
-  match
-    Db.Cluster_host.get_refs_where ~__context
-      ~expr:Db_filter_types.(Eq (Field "host", Literal (Ref.string_of host)))
-  with
+  let expr =
+    Xapi_database.Db_filter_types.(
+      Eq (Field "host", Literal (Ref.string_of host))
+    )
+  in
+  match Db.Cluster_host.get_refs_where ~__context ~expr with
   | [ref] ->
       Some ref
   | _ :: _ ->
@@ -321,6 +326,21 @@ let rpc ~__context =
             "Can only communicate with xapi-clusterd through message-switch"
       )
 
+let maybe_switch_cluster_stack_version ~__context ~self ~cluster_stack =
+  if Xapi_cluster_helpers.corosync3_enabled ~__context then
+    let result =
+      Cluster_client.LocalClient.switch_cluster_stack (rpc ~__context)
+        "maybe_switch_cluster_stack_version" cluster_stack
+    in
+    match Idl.IdM.run @@ Cluster_client.IDL.T.get result with
+    | Ok () ->
+        debug "cluster stack switching was successful for cluster_host: %s"
+          (Ref.string_of self)
+    | Error error ->
+        warn "Error encountered when switching cluster stack cluster_host %s"
+          (Ref.string_of self) ;
+        handle_error error
+
 let assert_cluster_host_quorate ~__context ~self =
   (* With the latest kernel GFS2 would hang on mount if clustering is not working yet,
    * whereas previously we got a 'Transport endpoint not connected' error.
@@ -419,10 +439,11 @@ let on_corosync_update ~__context ~cluster updates =
         List.map
           (fun ch ->
             let pIF = Db.Cluster_host.get_PIF ~__context ~self:ch in
-            let (Cluster_interface.IPv4 ip) =
+            let ipstr =
               ip_of_pif (pIF, Db.PIF.get_record ~__context ~self:pIF)
+              |> ipstr_of_address
             in
-            (ip, ch)
+            (ipstr, ch)
           )
           all_cluster_hosts
       in
@@ -439,13 +460,14 @@ let on_corosync_update ~__context ~cluster updates =
       | Some nodel ->
           let quorum_hosts =
             List.filter_map
-              (fun {addr= IPv4 addr; _} ->
-                match List.assoc_opt addr ip_ch with
+              (fun {addr; _} ->
+                let ipstr = ipstr_of_address addr in
+                match List.assoc_opt ipstr ip_ch with
                 | None ->
                     error
                       "%s: cannot find cluster host with network address %s, \
                        ignoring this host"
-                      __FUNCTION__ addr ;
+                      __FUNCTION__ ipstr ;
                     None
                 | Some ch ->
                     Some ch
@@ -457,20 +479,27 @@ let on_corosync_update ~__context ~cluster updates =
               (fun h -> not (List.mem h quorum_hosts))
               all_cluster_hosts
           in
+          let new_hosts =
+            List.filter
+              (fun h -> not (Db.Cluster_host.get_live ~__context ~self:h))
+              quorum_hosts
+          in
           List.iter
             (fun self ->
               Db.Cluster_host.set_live ~__context ~self ~value:true ;
               Db.Cluster_host.set_last_update_live ~__context ~self
                 ~value:current_time
             )
-            quorum_hosts ;
+            new_hosts ;
           List.iter
             (fun self ->
               Db.Cluster_host.set_live ~__context ~self ~value:false ;
               Db.Cluster_host.set_last_update_live ~__context ~self
                 ~value:current_time
             )
-            missing_hosts
+            missing_hosts ;
+          maybe_generate_alert ~__context ~missing_hosts ~new_hosts
+            ~num_hosts:(List.length quorum_hosts) ~quorum:diag.quorum
       ) ;
       Db.Cluster.set_quorum ~__context ~self:cluster
         ~value:(Int64.of_int diag.quorum) ;
@@ -515,12 +544,7 @@ let create_cluster_watcher_on_master ~__context ~host =
             Thread.delay 3.
       done
     in
-    let feature_enabled =
-      let pool = Helpers.get_pool ~__context in
-      let restrictions = Db.Pool.get_restrictions ~__context ~self:pool in
-      List.assoc_opt "restrict_cluster_health" restrictions = Some "false"
-    in
-    if feature_enabled then (
+    if Xapi_cluster_helpers.cluster_health_enabled ~__context then (
       debug "%s: create watcher for corosync-notifyd on master" __FUNCTION__ ;
       ignore @@ Thread.create watch ()
     ) else
