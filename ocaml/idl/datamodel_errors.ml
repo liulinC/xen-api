@@ -737,11 +737,14 @@ let _ =
     ~doc:"External authentication is disabled" () ;
   error Api_errors.auth_invalid_trusted_certs ["message"]
     ~doc:
-      "The certificates are invalid to setup a TLS connection to Active \
-       Directory."
+      "The trusted certificates are invalid to setup a TLS connection to \
+       Active Directory. This can be caused by trusted certificates on \
+       XenServer or certificates on Active Directory."
     () ;
   error Api_errors.auth_no_trusted_certs ["message"]
-    ~doc:"No certificates found to setup a TLS connection to Active Directory"
+    ~doc:
+      "No trusted CA certificates found to setup a TLS connection to Active \
+       Directory"
     () ;
   error Api_errors.auth_enable_failed ["message"]
     ~doc:"The host failed to enable external authentication." () ;
@@ -763,7 +766,8 @@ let _ =
   error Api_errors.auth_enable_failed_invalid_trusted_certs ["message"]
     ~doc:
       "The host failed to enable external authentication, invalid trusted \
-       certificates."
+       certificates. This can be caused by trusted certificates on XenServer \
+       or certificates on Active Directory."
     () ;
   error Api_errors.auth_enable_failed_no_trusted_certs ["message"]
     ~doc:
